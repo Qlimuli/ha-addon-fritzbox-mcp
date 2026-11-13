@@ -1,5 +1,5 @@
 name: "FRITZ!Box MCP Server"
-version: "1.0.4"
+version: "1.0.5"
 slug: fritzbox_mcp
 description: >-
   Provides a Model Context Protocol (MCP) server for AVM FRITZ!Box routers.
@@ -16,7 +16,7 @@ boot: auto
 ports:
   3000/tcp: 3000
 ports_description:
-  3000/tcp: MCP HTTP/SSE endpoint
+  3000/tcp: MCP HTTP/SSE + REST API endpoint
 map:
   - type: addon_config
     read_only: false
