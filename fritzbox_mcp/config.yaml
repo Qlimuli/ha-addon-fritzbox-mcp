@@ -1,5 +1,5 @@
 name: "FRITZ!Box MCP Server"
-version: "1.0.3"
+version: "1.0.4"
 slug: fritzbox_mcp
 description: >-
   Provides a Model Context Protocol (MCP) server for AVM FRITZ!Box routers.
