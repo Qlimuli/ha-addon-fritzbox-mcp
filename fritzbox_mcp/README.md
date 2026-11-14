@@ -1,53 +1,51 @@
 # FRITZ!Box MCP Server Add-on
 
-This Home Assistant add-on runs an MCP (Model Context Protocol) server for your AVM FRITZ!Box router.
+Home Assistant add-on providing an MCP (Model Context Protocol) server plus a simple REST API for AVM FRITZ!Box routers.
 
-It is based on [ghbalf/mcp-fritzbox](https://github.com/ghbalf/mcp-fritzbox).
+Based on the architecture of [ghbalf/mcp-fritzbox](https://github.com/ghbalf/mcp-fritzbox) (MIT), extended with full TR-064 WLAN/Mesh diagnostics for real-world Mesh instability (DFS, auto-channel, weak 5 GHz).
 
 ## Features
 
-- Smart Home control (thermostats, switches)
-- Network & WAN status
-- Bandwidth statistics
-- Guest WiFi toggle
-- Device log
-- WAN reconnect
+| Area | Capabilities |
+|------|----------------|
+| Smart Home | List devices, thermostat, switch, stats |
+| WAN | Status, bandwidth, reconnect |
+| System | Model/firmware, device log |
+| WLAN | Radios, channel/auto-channel/DFS heuristic, set fixed channel, associated clients + signal |
+| Mesh | Topology JSON via `X_AVM-DE_GetMeshListPath` |
+| Misc | Guest WiFi, Wake-on-LAN |
+
+## Important TR-064 limits
+
+- **Fixed 5 GHz channel** on the **main box** works via `WLANConfiguration:2` → `SetChannel` (e.g. 36–48, non-DFS).
+- **Mesh repeaters** usually **follow the master**. Per-repeater auto-channel/DFS is **not** cleanly controllable over TR-064 — use the FRITZ! UI for stubborn repeaters (e.g. Repeater04).
+- Signal quality messages like *“waiting for better quality”* correlate with low `signalStrength` on `list_wlan_clients` and/or DFS/auto-channel churn in the log/Mesh topology.
 
 ## Installation
 
-1. Add this repository to Home Assistant:
-   `https://github.com/Qlimuli/ha-addon-fritzbox-mcp`
+1. Add repository: `https://github.com/Qlimuli/ha-addon-fritzbox-mcp`
+2. Install **FRITZ!Box MCP Server**
+3. Configure host (`fritz.box` or IP), user with **Smart Home** + **FRITZ!Box Settings**, port `3000`
+4. Start the add-on
 
-2. Install the **FRITZ!Box MCP Server** add-on.
+## REST API (no SSE required)
 
-3. Configure:
-   - **host**: usually `fritz.box` or the IP of your router
-   - **username** / **password**: a FRITZ!Box user with "Smart Home" and "FRITZ!Box Settings" permissions
-   - **port**: default 3000
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/health` | GET | Liveness |
+| `/api/system` | GET | Model / firmware |
+| `/api/wan` | GET | WAN status |
+| `/api/bandwidth` | GET | Counters / rates |
+| `/api/log?count=N` | GET | System log |
+| `/api/devices` | GET | Smart home + hosts |
+| `/api/wlan` | GET | All WLAN radios |
+| `/api/wlan/channel?instance=2` | GET | Channel info |
+| `/api/wlan/channel` | POST | `{ "instance": 2, "channel": 36 }` |
+| `/api/wlan/clients` | GET | Associated clients |
+| `/api/mesh` | GET | Mesh topology JSON |
 
-4. Start the add-on.
+## MCP tools
 
-## Connecting an MCP Client
+`list_devices`, `set_thermostat`, `toggle_switch`, `get_device_stats`, `get_system_info`, `get_wan_status`, `get_bandwidth_stats`, `toggle_guest_wifi`, `get_device_log`, `reconnect_wan`, `get_wlan_info`, `get_channel_info`, `set_wlan_channel`, `set_wlan_enable`, `list_wlan_clients`, `get_mesh_topology`, `wake_on_lan`
 
-The server exposes HTTP/SSE on the configured port (default 3000).
-
-SSE endpoint: `http://<homeassistant-ip>:3000/sse`  
-Messages: `http://<homeassistant-ip>:3000/messages`
-
-Example for Claude Desktop / mcp-remote:
-
-```json
-{
-  "mcpServers": {
-    "fritzbox": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "http://homeassistant.local:3000/sse", "--allow-http"]
-    }
-  }
-}
-```
-
-## Requirements
-
-- FRITZ!OS 8.20+ recommended
-- A dedicated FRITZ!Box user with the necessary permissions
+SSE: `http://<ha-ip>:3000/sse`

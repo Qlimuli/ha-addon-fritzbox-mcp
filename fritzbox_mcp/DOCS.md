@@ -4,26 +4,31 @@
 
 | Option | Description |
 |--------|-------------|
-| host | Hostname or IP of the FRITZ!Box (default: fritz.box) |
-| username | FRITZ!Box username |
-| password | FRITZ!Box password |
-| port | Port the MCP server listens on (default: 3000) |
+| host | Hostname or IP (default: `fritz.box`) |
+| username | FRITZ!Box user |
+| password | Password |
+| port | Listen port (default: 3000) |
 
-Create a dedicated user in the FRITZ!Box under System → FRITZ!Box Users and grant:
+Create a dedicated user under **System → FRITZ!Box Users** with:
+
 - Smart Home
 - FRITZ!Box Settings
 
-## Available tools (via MCP)
+Also enable **Heimnetz → Netzwerk → Netzwerkeinstellungen → Zugriff für Anwendungen zulassen** (TR-064) if needed.
 
-- list_devices
-- set_thermostat
-- toggle_switch
-- get_device_stats
-- get_system_info
-- get_wan_status
-- get_bandwidth_stats
-- toggle_guest_wifi
-- get_device_log
-- reconnect_wan
+## WLAN instances (typical)
 
-See the upstream project for full details.
+| Instance | Role |
+|----------|------|
+| 1 | 2.4 GHz main |
+| 2 | 5 GHz main |
+| 3 | Guest |
+
+## Recommended fix for DFS / unstable 5 GHz
+
+1. `GET /api/wlan` — check `autoChannelEnabled` and `likelyDfsChannel`
+2. `POST /api/wlan/channel` with `{ "instance": 2, "channel": 36 }` (or 40/44/48)
+3. `GET /api/mesh` — verify repeaters / offline nodes
+4. `GET /api/log?count=80` — look for radar / channel scan messages
+
+Repeater-only auto scans may still need a fixed channel in the FRITZ! UI on that repeater.
