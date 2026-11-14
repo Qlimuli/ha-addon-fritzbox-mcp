@@ -1,10 +1,9 @@
 name: "FRITZ!Box MCP Server"
-version: "1.0.5"
+version: "1.1.0"
 slug: fritzbox_mcp
 description: >-
-  Provides a Model Context Protocol (MCP) server for AVM FRITZ!Box routers.
-  Control smart home devices, monitor network status, WAN, guest WiFi and more
-  via any MCP-compatible AI client (Claude, ChatGPT, etc.).
+  MCP + REST server for AVM FRITZ!Box: Smart Home, WAN, bandwidth, system log,
+  WLAN channels (2.4/5 GHz), associated clients with signal, Mesh topology.
 url: "https://github.com/Qlimuli/ha-addon-fritzbox-mcp"
 arch:
   - aarch64
