@@ -31,10 +31,12 @@ export interface NetworkDevice {
   macAddress: string;
   active: boolean;
   interfaceType: string;
-  /** Mesh / WLAN AP the host is associated with when known */
   accessPoint?: string;
-  /** Band or media: 2.4 GHz / 5 GHz / LAN / … */
   connection?: string;
+  wanAccess?: string;
+  guest?: boolean;
+  meshable?: boolean;
+  friendlyName?: string;
 }
 
 export interface WlanChannelInfo {
@@ -57,7 +59,6 @@ export interface WlanInfo {
   frequencyBand: string;
   autoChannelEnabled: boolean;
   possibleChannels: number[];
-  /** Heuristic: typical DFS range 52–144 on 5 GHz */
   likelyDfsChannel: boolean;
 }
 
@@ -69,4 +70,69 @@ export interface AssociatedWlanClient {
   speedMbps: number;
   signalStrength: number;
   channelWidth: number;
+}
+
+export interface LanConfig {
+  dhcpServerConfigurable: boolean;
+  dhcpRelay: boolean;
+  minAddress: string;
+  maxAddress: string;
+  reservedAddresses: string;
+  dhcpServerEnable: boolean;
+  dnsServers: string;
+  domainName: string;
+  ipRouters: string;
+  subnetMask: string;
+}
+
+export interface LanStats {
+  bytesSent: number;
+  bytesReceived: number;
+  packetsSent: number;
+  packetsReceived: number;
+}
+
+export interface DslInfo {
+  enable: boolean;
+  status: string;
+  dataPath: string;
+  upstreamCurrRate: number;
+  downstreamCurrRate: number;
+  upstreamMaxRate: number;
+  downstreamMaxRate: number;
+  upstreamNoiseMargin: number;
+  downstreamNoiseMargin: number;
+  upstreamAttenuation: number;
+  downstreamAttenuation: number;
+  extra?: Record<string, string | number | boolean>;
+}
+
+export interface UpdateInfo {
+  upgradeAvailable: boolean;
+  updateState?: string;
+  currentFwVersion?: string;
+  lastFwVersion?: string;
+  autoUpdateMode?: string;
+  passwordRequired?: boolean;
+}
+
+export interface WanAccessInfo {
+  ip: string;
+  allowed: boolean;
+  raw?: Record<string, string>;
+}
+
+export interface NightControlInfo {
+  instance: number;
+  nightControl: string;
+  noForcedOff: boolean;
+}
+
+export interface BoxTimeInfo {
+  ntpServer1?: string;
+  ntpServer2?: string;
+  currentLocalTime?: string;
+  localTimeZone?: string;
+  localTimeZoneName?: string;
+  daylightSavingsUsed?: boolean;
 }

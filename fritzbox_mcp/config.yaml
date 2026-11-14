@@ -1,9 +1,9 @@
 name: "FRITZ!Box MCP Server"
-version: "1.1.0"
+version: "1.2.0"
 slug: fritzbox_mcp
 description: >-
-  MCP + REST server for AVM FRITZ!Box: Smart Home, WAN, bandwidth, system log,
-  WLAN channels (2.4/5 GHz), associated clients with signal, Mesh topology.
+  MCP + REST for AVM FRITZ!Box: Smart Home, WAN, WLAN channels/clients, Mesh,
+  HostFilter (WAN block), DSL/LAN stats, reboot, firmware update check, WPS, diagnostics.
 url: "https://github.com/Qlimuli/ha-addon-fritzbox-mcp"
 arch:
   - aarch64
