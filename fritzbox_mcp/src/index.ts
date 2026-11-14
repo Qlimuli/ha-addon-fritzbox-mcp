@@ -7,32 +7,28 @@ import { resolveConfig } from "./types/config.js";
 import { AuthProvider } from "./auth/auth-provider.js";
 import { SmartHomeClient } from "./client/smart-home.js";
 import { TR064Client } from "./client/tr064.js";
+import { extendTr064 } from "./client/tr064-extra.js";
 import { createMcpServer } from "./server.js";
 
 async function main() {
   const config = resolveConfig(process.argv.slice(2));
 
   if (!config.fritzbox.username || !config.fritzbox.password) {
-    console.error(
-      "Error: FRITZBOX_USERNAME and FRITZBOX_PASSWORD must be set " +
-        "(via environment variables or --user / --pass flags)"
-    );
+    console.error("Error: FRITZBOX_USERNAME and FRITZBOX_PASSWORD must be set");
     process.exit(1);
   }
 
   const authProvider = new AuthProvider(config.fritzbox);
   const smartHome = new SmartHomeClient(config.fritzbox.host, authProvider);
-  const tr064 = new TR064Client(config.fritzbox.host, authProvider);
+  const tr064 = extendTr064(new TR064Client(config.fritzbox.host, authProvider));
   const server = createMcpServer(smartHome, tr064);
 
   if (config.transport === "stdio") {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+    await server.connect(new StdioServerTransport());
     return;
   }
 
   let sseTransport: SSEServerTransport | null = null;
-
   const json = (res: any, code: number, body: unknown) => {
     res.writeHead(code, {
       "Content-Type": "application/json",
@@ -59,21 +55,15 @@ async function main() {
       return json(res, 200, {
         status: "ok",
         service: "mcp-fritzbox",
-        version: "1.1.0",
+        version: "1.2.0",
         host: config.fritzbox.host,
       });
     }
 
     try {
-      if (path === "/api/system" && req.method === "GET") {
-        return json(res, 200, await tr064.getSystemInfo());
-      }
-      if (path === "/api/wan" && req.method === "GET") {
-        return json(res, 200, await tr064.getWanStatus());
-      }
-      if (path === "/api/bandwidth" && req.method === "GET") {
-        return json(res, 200, await tr064.getBandwidthStats());
-      }
+      if (path === "/api/system" && req.method === "GET") return json(res, 200, await tr064.getSystemInfo());
+      if (path === "/api/wan" && req.method === "GET") return json(res, 200, await tr064.getWanStatus());
+      if (path === "/api/bandwidth" && req.method === "GET") return json(res, 200, await tr064.getBandwidthStats());
       if (path === "/api/log" && req.method === "GET") {
         const count = Number(url.searchParams.get("count") || 40);
         const lines = await tr064.getDeviceLog(count);
@@ -86,29 +76,45 @@ async function main() {
         ]);
         return json(res, 200, { smartHomeDevices, networkDevices });
       }
-      if (path === "/api/wlan" && req.method === "GET") {
-        return json(res, 200, await tr064.listWlanConfigs());
-      }
+      if (path === "/api/wlan" && req.method === "GET") return json(res, 200, await tr064.listWlanConfigs());
       if (path === "/api/wlan/clients" && req.method === "GET") {
         const inst = url.searchParams.get("instance");
-        return json(
-          res,
-          200,
-          await tr064.listAssociatedDevices(inst ? Number(inst) : undefined)
-        );
+        return json(res, 200, await tr064.listAssociatedDevices(inst ? Number(inst) : undefined));
       }
       if (path === "/api/wlan/channel" && req.method === "GET") {
-        const inst = Number(url.searchParams.get("instance") || 2);
-        return json(res, 200, await tr064.getChannelInfo(inst));
+        return json(res, 200, await tr064.getChannelInfo(Number(url.searchParams.get("instance") || 2)));
       }
       if (path === "/api/wlan/channel" && req.method === "POST") {
         const body = await readJsonBody(req);
-        const instance = Number(body.instance ?? 2);
-        const channel = Number(body.channel);
-        return json(res, 200, await tr064.setChannel(instance, channel));
+        return json(res, 200, await tr064.setChannel(Number(body.instance ?? 2), Number(body.channel)));
       }
-      if (path === "/api/mesh" && req.method === "GET") {
-        return json(res, 200, await tr064.getMeshTopology());
+      if (path === "/api/mesh" && req.method === "GET") return json(res, 200, await tr064.getMeshTopology());
+      if (path === "/api/lan" && req.method === "GET") return json(res, 200, await tr064.getLanConfig());
+      if (path === "/api/lan/stats" && req.method === "GET") return json(res, 200, await tr064.getLanStats());
+      if (path === "/api/dsl" && req.method === "GET") return json(res, 200, await tr064.getDslInfo());
+      if (path === "/api/update" && req.method === "GET") return json(res, 200, await tr064.getUpdateInfo());
+      if (path === "/api/update/check" && req.method === "POST") return json(res, 200, await tr064.checkUpdate());
+      if (path === "/api/time" && req.method === "GET") return json(res, 200, await tr064.getBoxTime());
+      if (path === "/api/diagnostics" && req.method === "GET")
+        return json(res, 200, await tr064.getDiagnosticsSnapshot());
+      if (path === "/api/host" && req.method === "GET") {
+        const ip = url.searchParams.get("ip");
+        const mac = url.searchParams.get("mac");
+        if (ip) return json(res, 200, await tr064.getHostByIp(ip));
+        if (mac) return json(res, 200, await tr064.getHostByMac(mac));
+        return json(res, 400, { error: "Provide ?ip= or ?mac=" });
+      }
+      if (path === "/api/host/wan-access" && req.method === "GET") {
+        const ip = url.searchParams.get("ip");
+        if (!ip) return json(res, 400, { error: "Provide ?ip=" });
+        return json(res, 200, await tr064.getWanAccessByIp(ip));
+      }
+      if (path === "/api/host/wan-access" && req.method === "POST") {
+        const body = await readJsonBody(req);
+        return json(res, 200, await tr064.setWanAccessByIp(String(body.ip), Boolean(body.disallow)));
+      }
+      if (path === "/api/reboot" && req.method === "POST") {
+        return json(res, 200, await tr064.reboot());
       }
     } catch (err: any) {
       return json(res, 500, { error: err?.message || String(err) });
@@ -120,9 +126,8 @@ async function main() {
       return;
     }
     if (path.startsWith("/messages") && req.method === "POST") {
-      if (sseTransport) {
-        await sseTransport.handlePostMessage(req, res);
-      } else {
+      if (sseTransport) await sseTransport.handlePostMessage(req, res);
+      else {
         res.writeHead(400);
         res.end("No SSE connection established");
       }
@@ -134,12 +139,8 @@ async function main() {
   });
 
   httpServer.listen(config.httpPort, () => {
-    console.error(
-      `MCP FRITZ!Box server v1.1.0 listening on http://0.0.0.0:${config.httpPort}`
-    );
-    console.error(`Health:  http://localhost:${config.httpPort}/health`);
-    console.error(`SSE:     http://localhost:${config.httpPort}/sse`);
-    console.error(`REST:    /api/{system,wan,bandwidth,log,devices,wlan,wlan/clients,mesh}`);
+    console.error(`MCP FRITZ!Box server v1.2.0 on http://0.0.0.0:${config.httpPort}`);
+    console.error(`REST: /api/{system,wan,wlan,mesh,lan,dsl,update,diagnostics,host,reboot,…}`);
   });
 }
 
@@ -149,8 +150,7 @@ function readJsonBody(req: any): Promise<any> {
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
       try {
-        const raw = Buffer.concat(chunks).toString("utf8") || "{}";
-        resolve(JSON.parse(raw));
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"));
       } catch (e) {
         reject(e);
       }

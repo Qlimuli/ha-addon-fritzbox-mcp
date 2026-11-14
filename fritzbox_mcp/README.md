@@ -1,51 +1,33 @@
-# FRITZ!Box MCP Server Add-on
+# FRITZ!Box MCP Server Add-on (v1.2.0)
 
-Home Assistant add-on providing an MCP (Model Context Protocol) server plus a simple REST API for AVM FRITZ!Box routers.
+MCP + REST for AVM FRITZ!Box: Smart Home, WAN, **WLAN/Mesh**, **HostFilter**, DSL/LAN, reboot, firmware check, diagnostics.
 
-Based on the architecture of [ghbalf/mcp-fritzbox](https://github.com/ghbalf/mcp-fritzbox) (MIT), extended with full TR-064 WLAN/Mesh diagnostics for real-world Mesh instability (DFS, auto-channel, weak 5 GHz).
+## New in 1.2.0
 
-## Features
+| Capability | MCP tool | REST |
+|------------|----------|------|
+| Diagnostics snapshot | `get_diagnostics` | `GET /api/diagnostics` |
+| Block/allow Internet per IP | `set_wan_access` / `get_wan_access` | `POST/GET /api/host/wan-access` |
+| Host by IP/MAC | `get_host` | `GET /api/host?ip=` / `?mac=` |
+| LAN DHCP config / stats | `get_lan_config` / `get_lan_stats` | `/api/lan`, `/api/lan/stats` |
+| DSL line quality | `get_dsl_info` | `/api/dsl` |
+| Firmware update info | `get_update_info` / `check_update` | `/api/update`, `POST /api/update/check` |
+| Box time / NTP | `get_box_time` | `/api/time` |
+| Global WLAN button | `set_wlan_global_enable` | — |
+| WPS PBC | `start_wps` | — |
+| Night control | `get_wlan_night_control` | — |
+| Reboot | `reboot_box` | `POST /api/reboot` |
 
-| Area | Capabilities |
-|------|----------------|
-| Smart Home | List devices, thermostat, switch, stats |
-| WAN | Status, bandwidth, reconnect |
-| System | Model/firmware, device log |
-| WLAN | Radios, channel/auto-channel/DFS heuristic, set fixed channel, associated clients + signal |
-| Mesh | Topology JSON via `X_AVM-DE_GetMeshListPath` |
-| Misc | Guest WiFi, Wake-on-LAN |
+Still in 1.1: WLAN channel set/get, clients+signal, mesh topology, log, WAN, smart home.
 
-## Important TR-064 limits
+## Limits (TR-064)
 
-- **Fixed 5 GHz channel** on the **main box** works via `WLANConfiguration:2` → `SetChannel` (e.g. 36–48, non-DFS).
-- **Mesh repeaters** usually **follow the master**. Per-repeater auto-channel/DFS is **not** cleanly controllable over TR-064 — use the FRITZ! UI for stubborn repeaters (e.g. Repeater04).
-- Signal quality messages like *“waiting for better quality”* correlate with low `signalStrength` on `list_wlan_clients` and/or DFS/auto-channel churn in the log/Mesh topology.
+- Per-repeater channel / auto-scan: **not** fully controllable → FRITZ! UI for stubborn Mesh nodes.
+- DSL endpoints empty on pure cable/fiber models.
+- `reboot` / WAN block are disruptive — use deliberately.
 
-## Installation
+## Install
 
-1. Add repository: `https://github.com/Qlimuli/ha-addon-fritzbox-mcp`
-2. Install **FRITZ!Box MCP Server**
-3. Configure host (`fritz.box` or IP), user with **Smart Home** + **FRITZ!Box Settings**, port `3000`
-4. Start the add-on
+Repository `https://github.com/Qlimuli/ha-addon-fritzbox-mcp` → install **FRITZ!Box MCP Server** ≥ 1.2.0.
 
-## REST API (no SSE required)
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health` | GET | Liveness |
-| `/api/system` | GET | Model / firmware |
-| `/api/wan` | GET | WAN status |
-| `/api/bandwidth` | GET | Counters / rates |
-| `/api/log?count=N` | GET | System log |
-| `/api/devices` | GET | Smart home + hosts |
-| `/api/wlan` | GET | All WLAN radios |
-| `/api/wlan/channel?instance=2` | GET | Channel info |
-| `/api/wlan/channel` | POST | `{ "instance": 2, "channel": 36 }` |
-| `/api/wlan/clients` | GET | Associated clients |
-| `/api/mesh` | GET | Mesh topology JSON |
-
-## MCP tools
-
-`list_devices`, `set_thermostat`, `toggle_switch`, `get_device_stats`, `get_system_info`, `get_wan_status`, `get_bandwidth_stats`, `toggle_guest_wifi`, `get_device_log`, `reconnect_wan`, `get_wlan_info`, `get_channel_info`, `set_wlan_channel`, `set_wlan_enable`, `list_wlan_clients`, `get_mesh_topology`, `wake_on_lan`
-
-SSE: `http://<ha-ip>:3000/sse`
+User needs **Smart Home** + **FRITZ!Box Settings**; enable application access (TR-064) if required.

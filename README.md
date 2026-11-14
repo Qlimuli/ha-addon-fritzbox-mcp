@@ -1,26 +1,20 @@
 # Home Assistant Add-on: FRITZ!Box MCP Server
 
-MCP + REST interface for AVM FRITZ!Box routers: Smart Home, WAN, system log, **WLAN channels**, associated clients with signal, and **Mesh topology**.
+MCP + REST for AVM FRITZ!Box — Smart Home, WAN, WLAN/Mesh, HostFilter, DSL, diagnostics.
 
-## Quick install
+## Install
 
-1. **Settings → Add-ons → Add-on store → ⋮ → Repositories**
-2. Add: `https://github.com/Qlimuli/ha-addon-fritzbox-mcp`
-3. Install **FRITZ!Box MCP Server** (v1.1.0+)
-4. Configure host, username, password (Smart Home + Settings rights)
-5. Start the add-on — port **3000**
+1. Add repository: `https://github.com/Qlimuli/ha-addon-fritzbox-mcp`
+2. Install **FRITZ!Box MCP Server** (v1.2.0+)
+3. Configure host + user (Smart Home + Settings)
+4. Port **3000**
 
-## Diagnose unstable 5 GHz / Mesh
+## Quick diagnostics
 
 ```bash
+curl http://homeassistant.local:3000/api/diagnostics
 curl http://homeassistant.local:3000/api/wlan
 curl http://homeassistant.local:3000/api/mesh
-curl http://homeassistant.local:3000/api/wlan/clients
-curl -X POST http://homeassistant.local:3000/api/wlan/channel \
-  -H 'Content-Type: application/json' \
-  -d '{"instance":2,"channel":36}'
 ```
 
-See `fritzbox_mcp/README.md` for full tool and REST documentation.
-
-Inspired by [ghbalf/mcp-fritzbox](https://github.com/ghbalf/mcp-fritzbox) (MIT).
+See `fritzbox_mcp/README.md` for the full tool list.

@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { SmartHomeClient } from "./client/smart-home.js";
-import { TR064Client } from "./client/tr064.js";
+import type { TR064Client } from "./client/tr064.js";
+import type { Tr064Extra } from "./client/tr064-extra.js";
 import {
   FritzAuthError,
   FritzConnectionError,
@@ -9,350 +10,197 @@ import {
   FritzInvalidParameterError,
 } from "./types/errors.js";
 
-export function createMcpServer(
-  smartHome: SmartHomeClient,
-  tr064: TR064Client
-): McpServer {
-  const server = new McpServer({
-    name: "mcp-fritzbox",
-    version: "1.1.0",
-  });
+type FullTr064 = TR064Client & Tr064Extra;
 
-  server.tool(
-    "list_devices",
-    "List all smart home actors and network devices connected to the FRITZ!Box",
-    {},
-    async () => {
+export function createMcpServer(smartHome: SmartHomeClient, tr064: FullTr064): McpServer {
+  const server = new McpServer({ name: "mcp-fritzbox", version: "1.2.0" });
+
+  const tool = (
+    name: string,
+    description: string,
+    schema: Record<string, z.ZodTypeAny>,
+    fn: (args: any) => Promise<unknown>
+  ) => {
+    server.tool(name, description, schema, async (args) => {
       try {
-        const [smartHomeDevices, networkDevices] = await Promise.all([
-          smartHome.listDevices(),
-          tr064.listNetworkDevices(),
-        ]);
-        return ok({ smartHomeDevices, networkDevices });
+        return ok(await fn(args));
       } catch (error) {
         return handleError(error);
       }
-    }
-  );
+    });
+  };
 
-  server.tool(
+  tool("list_devices", "List smart home actors and network devices", {}, async () => ({
+    smartHomeDevices: await smartHome.listDevices(),
+    networkDevices: await tr064.listNetworkDevices(),
+  }));
+
+  tool(
     "set_thermostat",
-    "Set the target temperature on a FRITZ!DECT thermostat",
+    "Set FRITZ!DECT thermostat target temperature",
     {
-      ain: z.string().describe("Actor Identification Number of the thermostat"),
-      temperature: z
-        .union([z.enum(["ON", "OFF"]), z.coerce.number()])
-        .describe("Target temperature in °C (8.0–28.0), or 'ON' / 'OFF'"),
+      ain: z.string(),
+      temperature: z.union([z.enum(["ON", "OFF"]), z.coerce.number()]),
     },
-    async ({ ain, temperature }) => {
-      try {
-        return ok(await smartHome.setThermostat(ain, temperature));
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+    ({ ain, temperature }) => smartHome.setThermostat(ain, temperature)
   );
 
-  server.tool(
+  tool(
     "toggle_switch",
-    "Turn a FRITZ!DECT smart plug on or off",
-    {
-      ain: z.string().describe("Actor Identification Number of the switch"),
-      state: z.boolean().describe("true = on, false = off"),
-    },
-    async ({ ain, state }) => {
-      try {
-        return ok(await smartHome.toggleSwitch(ain, state));
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+    "Turn FRITZ!DECT switch on/off",
+    { ain: z.string(), state: z.boolean() },
+    ({ ain, state }) => smartHome.toggleSwitch(ain, state)
   );
 
-  server.tool(
-    "get_device_stats",
-    "Get temperature history or energy consumption statistics for a smart home device",
-    { ain: z.string().describe("Actor Identification Number of the device") },
-    async ({ ain }) => {
-      try {
-        return ok(await smartHome.getDeviceStats(ain));
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+  tool("get_device_stats", "Smart home device statistics", { ain: z.string() }, ({ ain }) =>
+    smartHome.getDeviceStats(ain)
   );
 
-  server.tool(
-    "get_system_info",
-    "Get FRITZ!Box system information including model, firmware version, and serial number",
-    {},
-    async () => {
-      try {
-        return ok(await tr064.getSystemInfo());
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+  tool("get_system_info", "Model, firmware, serial", {}, () => tr064.getSystemInfo());
+  tool("get_wan_status", "WAN IP and link status", {}, () => tr064.getWanStatus());
+  tool("get_bandwidth_stats", "Bandwidth counters and line rates", {}, () =>
+    tr064.getBandwidthStats()
   );
-
-  server.tool(
-    "get_wan_status",
-    "Get WAN connection status including external IP, uptime, and link state",
-    {},
-    async () => {
-      try {
-        return ok(await tr064.getWanStatus());
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+  tool("toggle_guest_wifi", "Enable/disable guest WiFi", { enable: z.boolean() }, ({ enable }) =>
+    tr064.toggleGuestWifi(enable)
   );
-
-  server.tool(
-    "get_bandwidth_stats",
-    "Get total bandwidth usage and max line rates",
-    {},
-    async () => {
-      try {
-        return ok(await tr064.getBandwidthStats());
-      } catch (error) {
-        return handleError(error);
-      }
-    }
-  );
-
-  server.tool(
-    "toggle_guest_wifi",
-    "Enable or disable the FRITZ!Box guest WiFi network",
-    { enable: z.boolean().describe("true = enable, false = disable") },
-    async ({ enable }) => {
-      try {
-        return ok(await tr064.toggleGuestWifi(enable));
-      } catch (error) {
-        return handleError(error);
-      }
-    }
-  );
-
-  server.tool(
+  tool(
     "get_device_log",
-    "Get recent FRITZ!Box system log entries (useful for DFS/radar and WLAN events)",
-    {
-      count: z
-        .number()
-        .optional()
-        .default(40)
-        .describe("Number of log entries to return (default: 40)"),
-    },
-    async ({ count }) => {
-      try {
-        return ok(await tr064.getDeviceLog(count));
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+    "System log (DFS/WLAN events)",
+    { count: z.number().optional().default(40) },
+    ({ count }) => tr064.getDeviceLog(count)
   );
+  tool("reconnect_wan", "Force WAN reconnect / new external IP", {}, () => tr064.reconnectWan());
 
-  server.tool(
-    "reconnect_wan",
-    "Force a WAN reconnect to obtain a new external IP address",
-    {},
-    async () => {
-      try {
-        return ok(await tr064.reconnectWan());
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+  tool("get_wlan_info", "All WLAN radios: channel, auto-channel, DFS heuristic", {}, () =>
+    tr064.listWlanConfigs()
   );
-
-  // --- WLAN / Mesh diagnostics (core for unstable 5 GHz / Mesh issues) ---
-
-  server.tool(
-    "get_wlan_info",
-    "List WLAN radios on the FRITZ!Box (2.4 / 5 GHz / guest): SSID, channel, auto-channel, DFS heuristic, BSSID",
-    {},
-    async () => {
-      try {
-        return ok(await tr064.listWlanConfigs());
-      } catch (error) {
-        return handleError(error);
-      }
-    }
-  );
-
-  server.tool(
+  tool(
     "get_channel_info",
-    "Get channel details for one WLANConfiguration instance (1=2.4GHz, 2=5GHz typical)",
-    {
-      instance: z
-        .number()
-        .int()
-        .min(1)
-        .max(4)
-        .describe("WLANConfiguration instance: 1=2.4GHz, 2=5GHz, 3=guest"),
-    },
-    async ({ instance }) => {
-      try {
-        return ok(await tr064.getChannelInfo(instance));
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+    "Channel details for one WLAN instance",
+    { instance: z.number().int().min(1).max(4) },
+    ({ instance }) => tr064.getChannelInfo(instance)
   );
-
-  server.tool(
+  tool(
     "set_wlan_channel",
-    "Set a fixed WLAN channel on the main FRITZ!Box radio (disables auto-channel for that band). Prefer non-DFS 5 GHz channels 36–48. Mesh repeaters usually follow the master; per-repeater channel control is not reliably available via TR-064.",
-    {
-      instance: z
-        .number()
-        .int()
-        .min(1)
-        .max(4)
-        .describe("WLANConfiguration instance: 1=2.4GHz, 2=5GHz"),
-      channel: z
-        .number()
-        .int()
-        .min(1)
-        .max(196)
-        .describe("Target channel (e.g. 36, 40, 44, 48 for non-DFS 5 GHz)"),
-    },
-    async ({ instance, channel }) => {
-      try {
-        return ok(await tr064.setChannel(instance, channel));
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+    "Fixed channel on main box (prefer 5 GHz 36–48 non-DFS). Mesh repeaters usually follow master.",
+    { instance: z.number().int().min(1).max(4), channel: z.number().int().min(1).max(196) },
+    ({ instance, channel }) => tr064.setChannel(instance, channel)
   );
-
-  server.tool(
+  tool(
     "set_wlan_enable",
-    "Enable or disable a WLAN radio instance on the FRITZ!Box",
-    {
-      instance: z.number().int().min(1).max(4),
-      enable: z.boolean(),
-    },
-    async ({ instance, enable }) => {
-      try {
-        return ok(await tr064.setWlanEnable(instance, enable));
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+    "Enable/disable one WLAN radio",
+    { instance: z.number().int().min(1).max(4), enable: z.boolean() },
+    ({ instance, enable }) => tr064.setWlanEnable(instance, enable)
   );
-
-  server.tool(
+  tool(
     "list_wlan_clients",
-    "List Wi‑Fi clients associated to the FRITZ!Box APs with signal strength and link speed (helps explain 'waiting for better quality')",
-    {
-      instance: z
-        .number()
-        .int()
-        .min(1)
-        .max(4)
-        .optional()
-        .describe("Optional: limit to one WLAN instance; omit for all"),
-    },
-    async ({ instance }) => {
-      try {
-        return ok(await tr064.listAssociatedDevices(instance));
-      } catch (error) {
-        return handleError(error);
-      }
+    "Associated WiFi clients with signal/speed",
+    { instance: z.number().int().min(1).max(4).optional() },
+    ({ instance }) => tr064.listAssociatedDevices(instance)
+  );
+  tool("get_mesh_topology", "Mesh topology JSON", {}, () => tr064.getMeshTopology());
+  tool("wake_on_lan", "WoL by MAC", { mac: z.string() }, ({ mac }) => tr064.wakeOnLan(mac));
+
+  tool("get_lan_config", "DHCP range, DNS, subnet", {}, () => tr064.getLanConfig());
+  tool("get_lan_stats", "LAN interface byte/packet counters", {}, () => tr064.getLanStats());
+  tool("get_dsl_info", "DSL rates, SNR, attenuation (empty on cable/fiber)", {}, () =>
+    tr064.getDslInfo()
+  );
+  tool("get_update_info", "Firmware update availability", {}, () => tr064.getUpdateInfo());
+  tool("check_update", "Trigger firmware update check", {}, () => tr064.checkUpdate());
+  tool("get_box_time", "NTP / local time on the box", {}, () => tr064.getBoxTime());
+
+  tool(
+    "get_host",
+    "Lookup one host by IP or MAC",
+    { ip: z.string().optional(), mac: z.string().optional() },
+    async ({ ip, mac }) => {
+      if (ip) return tr064.getHostByIp(ip);
+      if (mac) return tr064.getHostByMac(mac);
+      throw new FritzInvalidParameterError("Provide ip or mac");
     }
   );
+  tool(
+    "get_wan_access",
+    "Whether a host IP is allowed WAN access",
+    { ip: z.string() },
+    ({ ip }) => tr064.getWanAccessByIp(ip)
+  );
+  tool(
+    "set_wan_access",
+    "Block or allow WAN access for a host IP (HostFilter)",
+    { ip: z.string(), disallow: z.boolean().describe("true = block Internet") },
+    ({ ip, disallow }) => tr064.setWanAccessByIp(ip, disallow)
+  );
+  tool(
+    "set_host_name",
+    "Set friendly hostname by MAC",
+    { mac: z.string(), name: z.string() },
+    ({ mac, name }) => tr064.setHostFriendlyName(mac, name)
+  );
 
-  server.tool(
-    "get_mesh_topology",
-    "Fetch FRITZ! Mesh topology JSON (repeaters, links, nodes). Primary diagnostic for Mesh/Repeater instability.",
+  tool(
+    "get_wlan_night_control",
+    "WLAN night schedule status",
+    { instance: z.number().int().min(1).max(4).optional() },
+    ({ instance }) => tr064.getWlanNightControl(instance)
+  );
+  tool(
+    "set_wlan_global_enable",
+    "Global WLAN on/off (like physical WLAN button)",
+    { enable: z.boolean() },
+    ({ enable }) => tr064.setWlanGlobalEnable(enable)
+  );
+  tool(
+    "start_wps",
+    "Start WPS push-button pairing",
+    { instance: z.number().int().min(1).max(4).optional().default(1) },
+    ({ instance }) => tr064.startWps(instance)
+  );
+
+  tool(
+    "reboot_box",
+    "Reboot the FRITZ!Box (brief outage)",
     {},
-    async () => {
-      try {
-        return ok(await tr064.getMeshTopology());
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+    () => tr064.reboot()
   );
 
-  server.tool(
-    "wake_on_lan",
-    "Send Wake-on-LAN to a host by MAC address via the FRITZ!Box",
-    {
-      mac: z.string().describe("MAC address, e.g. AA:BB:CC:DD:EE:FF"),
-    },
-    async ({ mac }) => {
-      try {
-        return ok(await tr064.wakeOnLan(mac));
-      } catch (error) {
-        return handleError(error);
-      }
-    }
+  tool(
+    "get_diagnostics",
+    "One-shot snapshot: system, WAN, WLAN, clients, mesh, DSL, log, update + hints for DFS/auto-channel/weak signal",
+    {},
+    () => tr064.getDiagnosticsSnapshot()
   );
 
   return server;
 }
 
 function ok(data: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-  };
+  return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
 }
 
 function handleError(error: unknown): {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
 } {
-  if (
-    error instanceof FritzDeviceNotFoundError ||
-    error instanceof FritzInvalidParameterError
-  ) {
+  if (error instanceof FritzDeviceNotFoundError || error instanceof FritzInvalidParameterError) {
     return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            {
-              error: error.code,
-              message: error.message,
-            },
-            null,
-            2
-          ),
-        },
-      ],
+      content: [{ type: "text", text: JSON.stringify({ error: error.code, message: error.message }, null, 2) }],
     };
   }
-
   if (error instanceof FritzAuthError) {
     return {
-      content: [
-        {
-          type: "text",
-          text: `Authentication failed: ${error.message}. Check FRITZBOX_USERNAME and FRITZBOX_PASSWORD.`,
-        },
-      ],
+      content: [{ type: "text", text: `Authentication failed: ${error.message}` }],
       isError: true,
     };
   }
-
   if (error instanceof FritzConnectionError) {
     return {
-      content: [
-        {
-          type: "text",
-          text: `Connection failed: ${error.message}. Verify FRITZBOX_HOST is reachable.`,
-        },
-      ],
+      content: [{ type: "text", text: `Connection failed: ${error.message}` }],
       isError: true,
     };
   }
-
   const message = error instanceof Error ? error.message : String(error);
-  return {
-    content: [{ type: "text", text: `Unexpected error: ${message}` }],
-    isError: true,
-  };
+  return { content: [{ type: "text", text: `Unexpected error: ${message}` }], isError: true };
 }

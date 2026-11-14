@@ -6,7 +6,7 @@ USERNAME=$(bashio::config 'username')
 PASSWORD=$(bashio::config 'password')
 PORT=$(bashio::config 'port')
 
-bashio::log.info "Starting FRITZ!Box MCP Server v1.1.0..."
+bashio::log.info "Starting FRITZ!Box MCP Server v1.2.0..."
 bashio::log.info "Host: ${HOST}"
 bashio::log.info "Port: ${PORT}"
 
@@ -23,7 +23,7 @@ if command -v curl >/dev/null 2>&1; then
      curl -sk --connect-timeout 3 "https://${HOST}" >/dev/null 2>&1; then
     bashio::log.info "FRITZ!Box at ${HOST} is reachable"
   else
-    bashio::log.warning "Could not reach FRITZ!Box at ${HOST} – check host/IP and network"
+    bashio::log.warning "Could not reach FRITZ!Box at ${HOST}"
   fi
 fi
 

@@ -14,12 +14,10 @@ import {
 } from "../types/tr064.js";
 import { FritzInvalidParameterError } from "../types/errors.js";
 
-/** WLANConfiguration instances: 1=2.4GHz main, 2=5GHz main, 3=guest (typical) */
 const WLAN_INSTANCES = [1, 2, 3] as const;
 
 function isLikelyDfs(channel: number, band: string): boolean {
   if (!/5/i.test(band) && channel < 50) return false;
-  // Classic 5 GHz DFS range in EU/DE roughly 52–144
   return channel >= 52 && channel <= 144;
 }
 
@@ -36,6 +34,36 @@ export class TR064Client {
       baseURL: `http://${host}:49000`,
       timeout: 15_000,
     });
+  }
+
+  /** Public SOAP entry for extensions (HostFilter, DSL, …). */
+  async soapCall(
+    service: string,
+    action: string,
+    controlUrl: string,
+    args?: Record<string, string>
+  ): Promise<any> {
+    const envelope = this.buildSoapEnvelope(service, action, args);
+    const headers = {
+      "Content-Type": 'text/xml; charset="utf-8"',
+      SOAPAction: `"urn:dslforum-org:service:${service}#${action}"`,
+    };
+
+    let wwwAuthenticate: string;
+    try {
+      const { data } = await this.http.post(controlUrl, envelope, { headers });
+      return this.parseSoapResponse(data, service, action);
+    } catch (error: any) {
+      if (error.response?.status !== 401) throw error;
+      wwwAuthenticate = error.response.headers["www-authenticate"] ?? "";
+      if (!wwwAuthenticate.startsWith("Digest")) throw error;
+    }
+
+    const authHeader = this.computeDigestAuth(wwwAuthenticate, "POST", controlUrl);
+    const { data } = await this.http.post(controlUrl, envelope, {
+      headers: { ...headers, Authorization: authHeader },
+    });
+    return this.parseSoapResponse(data, service, action);
   }
 
   async getSystemInfo(): Promise<SystemInfo> {
@@ -55,35 +83,17 @@ export class TR064Client {
   async getWanStatus(): Promise<WanStatus> {
     let ipResult: any;
     let statusResult: any;
-
     try {
       [ipResult, statusResult] = await Promise.all([
-        this.soapCall(
-          "WANPPPConnection:1",
-          "GetExternalIPAddress",
-          "/upnp/control/wanpppconn1"
-        ),
-        this.soapCall(
-          "WANPPPConnection:1",
-          "GetStatusInfo",
-          "/upnp/control/wanpppconn1"
-        ),
+        this.soapCall("WANPPPConnection:1", "GetExternalIPAddress", "/upnp/control/wanpppconn1"),
+        this.soapCall("WANPPPConnection:1", "GetStatusInfo", "/upnp/control/wanpppconn1"),
       ]);
     } catch {
       [ipResult, statusResult] = await Promise.all([
-        this.soapCall(
-          "WANIPConnection:1",
-          "GetExternalIPAddress",
-          "/upnp/control/wanipconnection1"
-        ),
-        this.soapCall(
-          "WANIPConnection:1",
-          "GetStatusInfo",
-          "/upnp/control/wanipconnection1"
-        ),
+        this.soapCall("WANIPConnection:1", "GetExternalIPAddress", "/upnp/control/wanipconnection1"),
+        this.soapCall("WANIPConnection:1", "GetStatusInfo", "/upnp/control/wanipconnection1"),
       ]);
     }
-
     return {
       externalIp: ipResult.NewExternalIPAddress,
       connectionStatus: statusResult.NewConnectionStatus,
@@ -94,21 +104,9 @@ export class TR064Client {
 
   async getBandwidthStats(): Promise<BandwidthStats> {
     const [received, sent, rates] = await Promise.all([
-      this.soapCall(
-        "WANCommonInterfaceConfig:1",
-        "GetTotalBytesReceived",
-        "/upnp/control/wancommonifconfig1"
-      ),
-      this.soapCall(
-        "WANCommonInterfaceConfig:1",
-        "GetTotalBytesSent",
-        "/upnp/control/wancommonifconfig1"
-      ),
-      this.soapCall(
-        "WANCommonInterfaceConfig:1",
-        "GetCommonLinkProperties",
-        "/upnp/control/wancommonifconfig1"
-      ),
+      this.soapCall("WANCommonInterfaceConfig:1", "GetTotalBytesReceived", "/upnp/control/wancommonifconfig1"),
+      this.soapCall("WANCommonInterfaceConfig:1", "GetTotalBytesSent", "/upnp/control/wancommonifconfig1"),
+      this.soapCall("WANCommonInterfaceConfig:1", "GetCommonLinkProperties", "/upnp/control/wancommonifconfig1"),
     ]);
     return {
       totalBytesReceived: Number(received.NewTotalBytesReceived),
@@ -119,19 +117,11 @@ export class TR064Client {
   }
 
   async toggleGuestWifi(enable: boolean): Promise<GuestWifiStatus> {
-    // Guest is typically WLANConfiguration:3; fall back to probing
     const instance = await this.resolveGuestInstance();
-    await this.soapCall(
-      `WLANConfiguration:${instance}`,
-      "SetEnable",
-      `/upnp/control/wlanconfig${instance}`,
-      { NewEnable: enable ? "1" : "0" }
-    );
-    const info = await this.soapCall(
-      `WLANConfiguration:${instance}`,
-      "GetInfo",
-      `/upnp/control/wlanconfig${instance}`
-    );
+    await this.soapCall(`WLANConfiguration:${instance}`, "SetEnable", `/upnp/control/wlanconfig${instance}`, {
+      NewEnable: enable ? "1" : "0",
+    });
+    const info = await this.soapCall(`WLANConfiguration:${instance}`, "GetInfo", `/upnp/control/wlanconfig${instance}`);
     return {
       enabled: info.NewEnable === "1" || info.NewEnable === 1,
       ssid: info.NewSSID,
@@ -140,30 +130,15 @@ export class TR064Client {
   }
 
   async getDeviceLog(count = 20): Promise<string[]> {
-    const attempts: Array<{ service: string; action: string; path: string; field: string }> = [
-      {
-        service: "DeviceInfo:1",
-        action: "GetDeviceLog",
-        path: "/upnp/control/deviceinfo",
-        field: "NewDeviceLog",
-      },
-      {
-        service: "DeviceInfo:1",
-        action: "X_AVM-DE_GetDeviceLog",
-        path: "/upnp/control/deviceinfo",
-        field: "NewDeviceLog",
-      },
+    const attempts = [
+      { service: "DeviceInfo:1", action: "GetDeviceLog", path: "/upnp/control/deviceinfo", field: "NewDeviceLog" },
+      { service: "DeviceInfo:1", action: "X_AVM-DE_GetDeviceLog", path: "/upnp/control/deviceinfo", field: "NewDeviceLog" },
     ];
-
     let lastError: unknown;
     for (const a of attempts) {
       try {
         const result = await this.soapCall(a.service, a.action, a.path);
-        const raw =
-          result[a.field] ??
-          result.NewDeviceLog ??
-          result.NewX_AVM_DE_DeviceLog ??
-          "";
+        const raw = result[a.field] ?? result.NewDeviceLog ?? "";
         if (typeof raw === "string" && raw.length > 0) {
           return String(raw).split("\n").filter(Boolean).slice(0, count);
         }
@@ -176,24 +151,13 @@ export class TR064Client {
 
   async reconnectWan(): Promise<{ message: string }> {
     try {
-      await this.soapCall(
-        "WANPPPConnection:1",
-        "ForceTermination",
-        "/upnp/control/wanpppconn1"
-      );
+      await this.soapCall("WANPPPConnection:1", "ForceTermination", "/upnp/control/wanpppconn1");
     } catch {
-      await this.soapCall(
-        "WANIPConnection:1",
-        "ForceTermination",
-        "/upnp/control/wanipconnection1"
-      );
+      await this.soapCall("WANIPConnection:1", "ForceTermination", "/upnp/control/wanipconnection1");
     }
-    return {
-      message: "WAN reconnect initiated — new IP will be assigned shortly",
-    };
+    return { message: "WAN reconnect initiated — new IP will be assigned shortly" };
   }
 
-  /** Prefer HostListPath (one HTTP GET); fall back to sequential SOAP entries. */
   async listNetworkDevices(): Promise<NetworkDevice[]> {
     try {
       return await this.listNetworkDevicesViaHostListPath();
@@ -203,22 +167,14 @@ export class TR064Client {
   }
 
   private async listNetworkDevicesViaHostListPath(): Promise<NetworkDevice[]> {
-    const pathResult = await this.soapCall(
-      "Hosts:1",
-      "X_AVM-DE_GetHostListPath",
-      "/upnp/control/hosts"
-    );
+    const pathResult = await this.soapCall("Hosts:1", "X_AVM-DE_GetHostListPath", "/upnp/control/hosts");
     const path = String(pathResult.NewX_AVM_DE_HostListPath ?? "");
     if (!path) throw new Error("Empty host list path");
-
-    const { data } = await axios.get(`http://${this.host}:49000${path}`, {
-      timeout: 15_000,
-    });
+    const { data } = await axios.get(`http://${this.host}:49000${path}`, { timeout: 15_000 });
     const parsed = this.parser.parse(String(data));
     const list = parsed.List ?? parsed.Item ?? parsed;
     let items = list.Item ?? list.item ?? list;
     if (!Array.isArray(items)) items = items ? [items] : [];
-
     return items.map((entry: any) => ({
       hostname: String(entry.HostName ?? entry.NewHostName ?? ""),
       ipAddress: String(entry.IPAddress ?? entry.NewIPAddress ?? ""),
@@ -229,20 +185,13 @@ export class TR064Client {
   }
 
   private async listNetworkDevicesViaSoapEntries(): Promise<NetworkDevice[]> {
-    const countResult = await this.soapCall(
-      "Hosts:1",
-      "GetHostNumberOfEntries",
-      "/upnp/control/hosts"
-    );
+    const countResult = await this.soapCall("Hosts:1", "GetHostNumberOfEntries", "/upnp/control/hosts");
     const count = Number(countResult.NewHostNumberOfEntries);
     const devices: NetworkDevice[] = [];
     for (let i = 0; i < count; i++) {
-      const entry = await this.soapCall(
-        "Hosts:1",
-        "GetGenericHostEntry",
-        "/upnp/control/hosts",
-        { NewIndex: String(i) }
-      );
+      const entry = await this.soapCall("Hosts:1", "GetGenericHostEntry", "/upnp/control/hosts", {
+        NewIndex: String(i),
+      });
       devices.push({
         hostname: entry.NewHostName ?? "",
         ipAddress: entry.NewIPAddress ?? "",
@@ -254,18 +203,10 @@ export class TR064Client {
     return devices;
   }
 
-  /** Mesh topology JSON from Hosts:X_AVM-DE_GetMeshListPath */
   async getMeshTopology(): Promise<unknown> {
-    const pathResult = await this.soapCall(
-      "Hosts:1",
-      "X_AVM-DE_GetMeshListPath",
-      "/upnp/control/hosts"
-    );
-    const path = String(
-      pathResult.NewX_AVM_DE_MeshListPath ?? pathResult.NewX_AVM_DE_HostListPath ?? ""
-    );
+    const pathResult = await this.soapCall("Hosts:1", "X_AVM-DE_GetMeshListPath", "/upnp/control/hosts");
+    const path = String(pathResult.NewX_AVM_DE_MeshListPath ?? "");
     if (!path) throw new Error("Empty mesh list path");
-
     const { data } = await axios.get(`http://${this.host}:49000${path}`, {
       timeout: 20_000,
       responseType: "text",
@@ -283,7 +224,7 @@ export class TR064Client {
       try {
         results.push(await this.getWlanInfo(instance));
       } catch {
-        // instance not present on this model
+        /* missing instance */
       }
     }
     return results;
@@ -292,34 +233,18 @@ export class TR064Client {
   async getWlanInfo(instance: number): Promise<WlanInfo> {
     this.assertWlanInstance(instance);
     const [info, channel, bssid] = await Promise.all([
-      this.soapCall(
-        `WLANConfiguration:${instance}`,
-        "GetInfo",
-        `/upnp/control/wlanconfig${instance}`
-      ),
-      this.soapCall(
-        `WLANConfiguration:${instance}`,
-        "GetChannelInfo",
-        `/upnp/control/wlanconfig${instance}`
-      ),
-      this.soapCall(
-        `WLANConfiguration:${instance}`,
-        "GetBSSID",
-        `/upnp/control/wlanconfig${instance}`
-      ).catch(() => ({ NewBSSID: "" })),
+      this.soapCall(`WLANConfiguration:${instance}`, "GetInfo", `/upnp/control/wlanconfig${instance}`),
+      this.soapCall(`WLANConfiguration:${instance}`, "GetChannelInfo", `/upnp/control/wlanconfig${instance}`),
+      this.soapCall(`WLANConfiguration:${instance}`, "GetBSSID", `/upnp/control/wlanconfig${instance}`).catch(() => ({
+        NewBSSID: "",
+      })),
     ]);
-
     const channelNum = Number(channel.NewChannel ?? info.NewChannel ?? 0);
-    const band = String(
-      channel.NewX_AVM_DE_FrequencyBand ??
-        info.NewX_AVM_DE_FrequencyBand ??
-        ""
-    );
+    const band = String(channel.NewX_AVM_DE_FrequencyBand ?? info.NewX_AVM_DE_FrequencyBand ?? "");
     const possible = String(channel.NewPossibleChannels ?? "")
       .split(",")
       .map((s) => Number(s.trim()))
       .filter((n) => !Number.isNaN(n) && n > 0);
-
     return {
       instance,
       enabled: info.NewEnable === "1" || info.NewEnable === 1,
@@ -351,54 +276,29 @@ export class TR064Client {
     };
   }
 
-  /**
-   * Set a fixed WLAN channel on the main box AP.
-   * Setting a concrete channel disables auto-channel for that radio.
-   * Mesh repeaters often follow the master; full per-repeater control is not
-   * reliably available via TR-064.
-   */
-  async setChannel(
-    instance: number,
-    channel: number
-  ): Promise<WlanChannelInfo> {
+  async setChannel(instance: number, channel: number): Promise<WlanChannelInfo> {
     this.assertWlanInstance(instance);
     if (!Number.isInteger(channel) || channel < 1 || channel > 196) {
-      throw new FritzInvalidParameterError(
-        `Invalid channel ${channel}. Use a valid WLAN channel number.`
-      );
+      throw new FritzInvalidParameterError(`Invalid channel ${channel}`);
     }
-    await this.soapCall(
-      `WLANConfiguration:${instance}`,
-      "SetChannel",
-      `/upnp/control/wlanconfig${instance}`,
-      { NewChannel: String(channel) }
-    );
+    await this.soapCall(`WLANConfiguration:${instance}`, "SetChannel", `/upnp/control/wlanconfig${instance}`, {
+      NewChannel: String(channel),
+    });
     return this.getChannelInfo(instance);
   }
 
-  async setWlanEnable(
-    instance: number,
-    enable: boolean
-  ): Promise<{ instance: number; enabled: boolean }> {
+  async setWlanEnable(instance: number, enable: boolean): Promise<{ instance: number; enabled: boolean }> {
     this.assertWlanInstance(instance);
-    await this.soapCall(
-      `WLANConfiguration:${instance}`,
-      "SetEnable",
-      `/upnp/control/wlanconfig${instance}`,
-      { NewEnable: enable ? "1" : "0" }
-    );
+    await this.soapCall(`WLANConfiguration:${instance}`, "SetEnable", `/upnp/control/wlanconfig${instance}`, {
+      NewEnable: enable ? "1" : "0",
+    });
     const info = await this.getWlanInfo(instance);
     return { instance, enabled: info.enabled };
   }
 
-  async listAssociatedDevices(
-    instance?: number
-  ): Promise<AssociatedWlanClient[]> {
-    const instances = instance
-      ? [instance]
-      : ([...WLAN_INSTANCES] as number[]);
+  async listAssociatedDevices(instance?: number): Promise<AssociatedWlanClient[]> {
+    const instances = instance ? [instance] : ([...WLAN_INSTANCES] as number[]);
     const clients: AssociatedWlanClient[] = [];
-
     for (const inst of instances) {
       try {
         const total = await this.soapCall(
@@ -419,19 +319,17 @@ export class TR064Client {
               instance: inst,
               macAddress: String(d.NewAssociatedDeviceMACAddress ?? ""),
               ipAddress: String(d.NewAssociatedDeviceIPAddress ?? ""),
-              authenticated:
-                d.NewAssociatedDeviceAuthState === "1" ||
-                d.NewAssociatedDeviceAuthState === 1,
+              authenticated: d.NewAssociatedDeviceAuthState === "1" || d.NewAssociatedDeviceAuthState === 1,
               speedMbps: Number(d.NewX_AVM_DE_Speed ?? 0),
               signalStrength: Number(d.NewX_AVM_DE_SignalStrength ?? 0),
               channelWidth: Number(d.NewX_AVM_DE_ChannelWidth ?? 0),
             });
           } catch {
-            // skip single index errors
+            /* skip */
           }
         }
       } catch {
-        // instance missing
+        /* missing */
       }
     }
     return clients;
@@ -450,20 +348,14 @@ export class TR064Client {
 
   private assertWlanInstance(instance: number): void {
     if (![1, 2, 3, 4].includes(instance)) {
-      throw new FritzInvalidParameterError(
-        `WLAN instance must be 1–4 (1=2.4GHz, 2=5GHz, 3=guest typical). Got: ${instance}`
-      );
+      throw new FritzInvalidParameterError(`WLAN instance must be 1–4. Got: ${instance}`);
     }
   }
 
   private async resolveGuestInstance(): Promise<number> {
     for (const instance of [3, 2, 4, 1]) {
       try {
-        await this.soapCall(
-          `WLANConfiguration:${instance}`,
-          "GetInfo",
-          `/upnp/control/wlanconfig${instance}`
-        );
+        await this.soapCall(`WLANConfiguration:${instance}`, "GetInfo", `/upnp/control/wlanconfig${instance}`);
         if (instance === 3) return 3;
       } catch {
         continue;
@@ -472,49 +364,12 @@ export class TR064Client {
     return 3;
   }
 
-  private async soapCall(
-    service: string,
-    action: string,
-    controlUrl: string,
-    args?: Record<string, string>
-  ): Promise<any> {
-    const envelope = this.buildSoapEnvelope(service, action, args);
-    const headers = {
-      "Content-Type": 'text/xml; charset="utf-8"',
-      SOAPAction: `"urn:dslforum-org:service:${service}#${action}"`,
-    };
-
-    let wwwAuthenticate: string;
-    try {
-      const { data } = await this.http.post(controlUrl, envelope, { headers });
-      return this.parseSoapResponse(data, service, action);
-    } catch (error: any) {
-      if (error.response?.status !== 401) throw error;
-      wwwAuthenticate = error.response.headers["www-authenticate"] ?? "";
-      if (!wwwAuthenticate.startsWith("Digest")) throw error;
-    }
-
-    const authHeader = this.computeDigestAuth(wwwAuthenticate, "POST", controlUrl);
-    const { data } = await this.http.post(controlUrl, envelope, {
-      headers: { ...headers, Authorization: authHeader },
-    });
-    return this.parseSoapResponse(data, service, action);
-  }
-
-  private computeDigestAuth(
-    wwwAuthenticate: string,
-    method: string,
-    uri: string
-  ): string {
+  private computeDigestAuth(wwwAuthenticate: string, method: string, uri: string): string {
     const { username, password } = this.auth.getDigestAuth();
     const realm = wwwAuthenticate.match(/realm="([^"]+)"/)?.[1] ?? "";
     const nonce = wwwAuthenticate.match(/nonce="([^"]+)"/)?.[1] ?? "";
     const qop = wwwAuthenticate.match(/qop="([^"]+)"/)?.[1] ?? "auth";
-
-    const ha1 = crypto
-      .createHash("md5")
-      .update(`${username}:${realm}:${password}`)
-      .digest("hex");
+    const ha1 = crypto.createHash("md5").update(`${username}:${realm}:${password}`).digest("hex");
     const ha2 = crypto.createHash("md5").update(`${method}:${uri}`).digest("hex");
     const nc = "00000001";
     const cnonce = crypto.randomBytes(8).toString("hex");
@@ -522,21 +377,15 @@ export class TR064Client {
       .createHash("md5")
       .update(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`)
       .digest("hex");
-
     return `Digest username="${username}", realm="${realm}", nonce="${nonce}", uri="${uri}", response="${response}", qop=${qop}, nc=${nc}, cnonce="${cnonce}"`;
   }
 
-  private buildSoapEnvelope(
-    service: string,
-    action: string,
-    args?: Record<string, string>
-  ): string {
+  private buildSoapEnvelope(service: string, action: string, args?: Record<string, string>): string {
     const argsXml = args
       ? Object.entries(args)
           .map(([key, value]) => `<${key}>${this.escapeXml(value)}</${key}>`)
           .join("")
       : "";
-
     return `<?xml version="1.0"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
             s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
@@ -552,17 +401,13 @@ export class TR064Client {
     if (!body) throw new Error(`Invalid SOAP response from ${service}#${action}`);
     if (body["s:Fault"]) {
       const fault = body["s:Fault"];
-      const faultString = fault.faultstring ?? fault.detail ?? "Unknown SOAP fault";
-      throw new Error(`SOAP fault from ${service}#${action}: ${faultString}`);
+      throw new Error(`SOAP fault from ${service}#${action}: ${fault.faultstring ?? fault.detail ?? "Unknown"}`);
     }
     const responseKey = `u:${action}Response`;
     return body[responseKey] ?? body[Object.keys(body)[0]];
   }
 
   private escapeXml(str: string): string {
-    return str
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 }
